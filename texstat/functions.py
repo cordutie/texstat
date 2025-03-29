@@ -1,5 +1,5 @@
 import torch
-import torch_filterbanks as fb
+import texstat.torch_filterbanks as fb
 
 def hilbert(x, N=None, axis=-1):
     """
@@ -26,7 +26,7 @@ def hilbert(x, N=None, axis=-1):
     if N <= 0:
         raise ValueError("N must be positive.")
 
-    Xf = torch.fft.fft(x, n=N, dim=axis)
+    Xf = torch.fft.rfft(x, n=N, dim=axis)
     h = torch.zeros(N, dtype=Xf.dtype, device=x.device)
 
     if N % 2 == 0:
@@ -41,7 +41,7 @@ def hilbert(x, N=None, axis=-1):
         ind[axis] = slice(None)
         h = h[tuple(ind)]
 
-    x_analytic = torch.fft.ifft(Xf * h, dim=axis)
+    x_analytic = torch.fft.irfft(Xf * h, dim=axis)
     return x_analytic
 
 def correlation_coefficient(x, y):
