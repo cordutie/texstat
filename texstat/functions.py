@@ -198,6 +198,19 @@ def statistics_mcds(signals, coch_fb, mod_fb, downsampler, N_moments = 4, alpha 
     # Return the statistics
     return [stats_1, stats_2, stats_3, stats_4, stats_5]
 
+def statistics_mcds_feature_vector(signal, coch_fb, mod_fb, downsampler, N_moments = 4, alpha = torch.tensor([100, 1, 1/10, 1/100])):
+    stats_1, stats_2, stats_3, stats_4, stats_5 = statistics_mcds(signal, coch_fb, mod_fb, downsampler, N_moments, alpha)
+    # transform to 1D
+    stats_1 = stats_1.view(-1)
+    stats_2 = stats_2.view(-1)
+    stats_3 = stats_3.view(-1)
+    stats_4 = stats_4.view(-1)
+    stats_5 = stats_5.view(-1)
+
+    # concatenate all stats
+    stats = torch.cat((stats_1, stats_2, stats_3, stats_4, stats_5), dim=0)
+    return stats
+
 def texstat_loss(x, y, coch_fb, mod_fb, downsampler, N_moments = 4, alpha = torch.tensor([100,1,1/10,1/100]), beta=torch.tensor([1, 20, 20, 20, 20])):
     """
     Compute the TexStat loss between two signals. The loss is computed as the weighted sum of the differences between the summary statistics of the two signals.
