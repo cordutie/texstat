@@ -158,17 +158,18 @@ def statistics_mcds(signals, coch_fb, mod_fb, downsampler, N_moments = 4, alpha 
     stats_1 = torch.zeros(batch_size, N_filter_bank, N_moments, device=device)
 
     # Compute the first two statistical moments
+    epsilon = 1e-8
     mu = env_subbands.mean(dim=-1)
     sigma = env_subbands.std(dim=-1)
     stats_1[:, :, 0] = mu * alpha[0]
-    stats_1[:, :, 1] = ((sigma ** 2) / (mu ** 2) ) * alpha[1]
+    stats_1[:, :, 1] = ((sigma ** 2) / (mu ** 2 + epsilon) ) * alpha[1]
     
     # If N_moments is bigger than 2 keep computing
     if N_moments > 2:
         # Compute normalized envelopes for faster computation of statistical moments.
         normalized_env_subbands = (env_subbands - mu.unsqueeze(-1))
         for j in range(2, N_moments):
-            stats_1[:, :, j] = ((normalized_env_subbands ** j).mean(dim=-1) / (sigma ** j)) * alpha[j]
+            stats_1[:, :, j] = ((normalized_env_subbands ** j ).mean(dim=-1) / (sigma ** j + epsilon)) * alpha[j]
 
     # Compute the second set of statistics
     corr_pairs = torch.triu_indices(N_filter_bank, N_filter_bank, 1)
