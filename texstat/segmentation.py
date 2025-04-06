@@ -50,6 +50,21 @@ def segment_audio(file_path, segment_size, sr, torch_type=False):
         segments = [torch.tensor(segment) for segment in segments]
     return segments
 
+def segment_audio_from_signal(signal, segment_size, torch_type=False):
+    # Transform to int16 and normalize
+    signal = signal / np.max(np.abs(signal))
+    audio = (signal * 32768).astype(np.int16)
+    audio = audio / 32768.0 
+
+    # Segment the audio
+    segments = [audio[i:i + segment_size] for i in range(0, len(audio), segment_size)]
+    segments.pop()  # Remove the last segment since it might be too short
+
+    # Convert to torch tensor if needed
+    if torch_type:
+        segments = [torch.tensor(segment) for segment in segments]
+    return segments
+
 # Function that segmentate all files in a path and make a numpy array from it
 def segmentate_from_path(path, sampling_rate = 44100, segment_length=44100, segments_number = None, torch_type=False):
     all_files = get_all_wav_paths(path)

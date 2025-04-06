@@ -55,6 +55,20 @@ def extract_embeddings_from_folder(folder_path, segment_size, sample_rate, segme
     print(f"Processed {len(embeddings_list)} segments in {folder_path}")
     return np.vstack(embeddings_list)  # Stack into a single array
 
+
+# Function to extract embeddings from folder
+def extract_embeddings_from_signal(signal, segment_size, *model_args, **model_kwargs):
+    embeddings_list = []
+    segments = segment_audio_from_signal(signal, segment_size)
+    for segment in segments:
+        # compute embedding/feature vector for each segment
+        embedding_local = stats_model(segment, *model_args, **model_kwargs)
+        if np.isnan(embedding_local).any():
+            continue
+        else:
+            embeddings_list.append(embedding_local)
+    return np.vstack(embeddings_list)  # Stack into a single array
+
 def compute_fad_from_embeddings(embeddings_real, embeddings_fake):
     mu_real, sigma_real = np.mean(embeddings_real, axis=0), np.cov(embeddings_real, rowvar=False)
     mu_fake, sigma_fake = np.mean(embeddings_fake, axis=0), np.cov(embeddings_fake, rowvar=False)
@@ -73,4 +87,11 @@ def compute_fad_from_folders(folder_path_1, folder_path_2, segment_size, sample_
             pickle.dump(embeddings_2, f)
     # Compute FAD
     fad_score = compute_fad_from_embeddings(embeddings_1, embeddings_2)
-    return fad_score  
+    return fad_score
+
+def compute_fad_from_signals(signal_1, signal_2, segment_size, sample_rate, segments_number=None, save=False, *model_args, **model_kwargs):
+    embeddings_1 = extract_embeddings_from_signal(signal_1, segment_size, *model_args, **model_kwargs)
+    embeddings_2 = extract_embeddings_from_signal(signal_2, segment_size, *model_args, **model_kwargs)
+    # Compute FAD
+    fad_score = compute_fad_from_embeddings(embeddings_1, embeddings_2)
+    return fad_score
