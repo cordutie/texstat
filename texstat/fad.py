@@ -89,7 +89,7 @@ def compute_fad_from_folders(folder_path_1, folder_path_2, segment_size, sample_
     fad_score = compute_fad_from_embeddings(embeddings_1, embeddings_2)
     return fad_score
 
-def compute_fad_from_signals(signal_1, signal_2, segment_size, sample_rate, segments_number=None, save=False, *model_args, **model_kwargs):
+def compute_fad_from_signals(signal_1, signal_2, segment_size, *model_args, **model_kwargs):
     embeddings_1 = extract_embeddings_from_signal(signal_1, segment_size, *model_args, **model_kwargs)
     embeddings_2 = extract_embeddings_from_signal(signal_2, segment_size, *model_args, **model_kwargs)
     # Compute FAD
