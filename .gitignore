@@ -3,3 +3,6 @@
 
 # Ignore Python bytecode cache directories
 __pycache__/
+
+# Ignore audio files used for testing
+*.wav

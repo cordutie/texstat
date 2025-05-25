@@ -1,5 +1,38 @@
 import torch
-import texstat.torch_filterbanks as fb
+import torchaudio
+import texstat.torch_filterbanks.filterbanks as fb
+
+class texstat_wrapper():
+    def __init__(self, frame_size, 
+                 N_filter_bank = 16, 
+                 M_filter_bank = 6, 
+                 N_moments     = 4, 
+                 sampling_rate = 44100, 
+                 downsampling_factor = 4, 
+                 alpha               = torch.tensor([1, 1/10, 1/100, 1/1000]),
+                 beta                = torch.tensor([1, 1, 1, 1, 1]),
+                 spectrum_lower_bound = 20, 
+                 spectrum_higher_bound = 22050, 
+                 device='cpu'):
+        self.frame_size          = frame_size
+        self.N_filter_bank       = N_filter_bank
+        self.M_filter_bank       = M_filter_bank
+        self.N_moments           = N_moments
+        self.sr                  = sampling_rate
+        self.downsampling_factor = downsampling_factor
+        self.alpha               = alpha.to(device)
+        self.beta                = beta.to(device)
+        self.new_sr              = self.sr // self.downsampling_factor
+        self.new_frame_size      = self.frame_size // self.downsampling_factor
+        self.downsampler = torchaudio.transforms.Resample(self.sr, self.new_sr).to(device)
+        self.coch_fb     = fb.EqualRectangularBandwidth(self.frame_size, self.sr, self.N_filter_bank, spectrum_lower_bound, spectrum_higher_bound)
+        self.mod_fb      = fb.Logarithmic(self.new_frame_size, self.new_sr, self.M_filter_bank,        10, self.new_sr // 4)
+
+    def stats(self, signal):
+        return statistics_mcds(signal, self.coch_fb, self.mod_fb, self.downsampler, self.N_moments, self.alpha)
+
+    def loss(self, signal_x, signal_y):
+        return texstat_loss(signal_x, signal_y, self.coch_fb, self.mod_fb, self.downsampler, self.N_moments, self.alpha, self.beta)
 
 def hilbert(x, N=None, axis=-1):
     """
@@ -199,6 +232,123 @@ def statistics_mcds(signals, coch_fb, mod_fb, downsampler, N_moments = 4, alpha 
     # Return the statistics
     return [stats_1, stats_2, stats_3, stats_4, stats_5]
 
+
+# Before using, make a cochlear filterbank (e.g. ERB Filterbank), a modulation filterbank (e.g. Log Filterbank) and a downsampler.
+# Example:
+#   coch_fb  = fb.EqualRectangularBandwidth(frame_size, sample_rate, N_filter_bank, low_lim, high_lim)
+#   log_bank = fb.Logarithmic(new_size, new_sample_rate, M_filter_bank, 10, new_sample_rate // 4)
+#   new_size = size // 4 and new_sample_rate = sample_rate // 4
+#   downsampler = torchaudio.transforms.Resample(sample_rate, new_sample_rate)
+def sub_statistics_mcds(signals, coch_fb, mod_fb, downsampler, N_moments = 4, alpha = torch.tensor([100, 1, 1/10, 1/100])):
+    """
+    Compute a subset of the summary statistics introduced by McDermott and Simoncelli. These statistics correspond to
+    
+    S_1 = Statistical Moments of amplitude envelopes of cochlear subband decomposition
+    S_2 = Correlation coefficients of amplitude envelopes of cochlear subband decomposition
+    S_3 = Energy portion of each modulation band
+
+    For a detailed description, see TexStat paper.
+
+    Parameters
+    ----------
+    signals : torch.Tensor
+        Signal data. Must be real.
+    coch_fb : filterbank object
+        Cochlear filterbank object
+    mod_fb : filterbank object
+        Modulation filterbank object
+    downsampler : torch.nn.Module
+        Downsampler object
+    N_moments : int
+        Number of statistical moments to compute. Default: 4
+    alpha : torch.Tensor
+        weigths for S_1 statistics. Default: [100, 1, 1/10, 1/100]
+
+    Returns
+    -------
+    [S_1, S_2, S_3] : list of torch.Tensor
+                    list of summary statistics with S_1 being weighted by alpha.
+    """
+    # Check N_moments is integer bigger or equal to 2
+    if not isinstance(N_moments, int) or N_moments < 2:
+        raise ValueError("N_moments must be an integer greater than or equal to 2.")
+    # Check alpha is a tensor of size N_moments
+    if not isinstance(alpha, torch.Tensor) or alpha.size(0) != N_moments:
+        raise ValueError("alpha must be a tensor of size N_moments.")
+
+    # retrieve device of the signal tensor
+    device = signals.device
+
+    # retrieve size of the filterbanks
+    N_filter_bank = coch_fb.N
+    M_filter_bank = mod_fb.N
+
+    # alpha to device
+    alpha = alpha.to(device)
+
+    # check if the input is a single signal or a batch
+    if signals.dim() == 1:  # Single signal case
+        signals = signals.unsqueeze(0)  # Add batch dimension (1, Size)
+        was_single = True
+    else:
+        was_single = False
+    
+    # Define the batch size
+    batch_size = signals.shape[0]
+
+    # Compute the cochlear subband decomposition
+    erb_subbands = coch_fb.generate_subbands(signals)[:, 1:-1, :]
+
+    # Compute the amplitude envelope of the cochlear subband decomposition
+    env_subbands = torch.abs(hilbert(erb_subbands))
+
+    # Downsample the amplitude envelopes for modulation analysis
+    env_subbands_downsampled = downsampler(env_subbands.float())
+
+    # Compute the length of the downsampled signal
+    length_downsampled       = env_subbands_downsampled.shape[-1]
+
+    # Compute the modulation subband decomposition
+    subenvelopes = torch.zeros((batch_size, N_filter_bank, M_filter_bank, length_downsampled), device=device)
+    for i in range(N_filter_bank):
+        banda     = env_subbands_downsampled[:, i, :]
+        subbandas = mod_fb.generate_subbands(banda)[:, 1:-1, :]
+        subenvelopes[:, i, :, :] = subbandas
+
+    # Defien the matrix S_1
+    stats_1 = torch.zeros(batch_size, N_filter_bank, N_moments, device=device)
+
+    # Compute the first two statistical moments
+    epsilon = 1e-8
+    mu = env_subbands.mean(dim=-1)
+    sigma = env_subbands.std(dim=-1)
+    stats_1[:, :, 0] = mu * alpha[0]
+    stats_1[:, :, 1] = ((sigma ** 2) / (mu ** 2 + epsilon) ) * alpha[1]
+    
+    # If N_moments is bigger than 2 keep computing
+    if N_moments > 2:
+        # Compute normalized envelopes for faster computation of statistical moments.
+        normalized_env_subbands = (env_subbands - mu.unsqueeze(-1))
+        for j in range(2, N_moments):
+            stats_1[:, :, j] = ((normalized_env_subbands ** j ).mean(dim=-1) / (sigma ** j + epsilon)) * alpha[j]
+
+    # Compute the second set of statistics
+    corr_pairs = torch.triu_indices(N_filter_bank, N_filter_bank, 1)
+    stats_2 = correlation_coefficient(env_subbands[:, corr_pairs[0]], env_subbands[:, corr_pairs[1]])
+
+    # Compute the third set of statistics
+    subenv_sigma = subenvelopes.std(dim=-1)
+    stats_3 = (subenv_sigma / (env_subbands_downsampled.std(dim=-1, keepdim=True))).view(batch_size, -1)
+
+    # If the input was a single signal, remove the batch dimension on each statistic
+    if was_single:
+        stats_1 = stats_1.squeeze(0)
+        stats_2 = stats_2.squeeze(0)
+        stats_3 = stats_3.squeeze(0)
+
+    # Return the statistics
+    return [stats_1, stats_2, stats_3]
+
 def statistics_mcds_feature_vector(signal, coch_fb, mod_fb, downsampler, N_moments = 4, alpha = torch.tensor([100, 1, 1/10, 1/100])):
     stats_1, stats_2, stats_3, stats_4, stats_5 = statistics_mcds(signal, coch_fb, mod_fb, downsampler, N_moments, alpha)
     # transform to 1D
@@ -210,6 +360,18 @@ def statistics_mcds_feature_vector(signal, coch_fb, mod_fb, downsampler, N_momen
 
     # concatenate all stats
     stats = torch.cat((stats_1, stats_2, stats_3, stats_4, stats_5), dim=0)
+    stats = torch.cat((stats_1, stats_2, stats_3), dim=0)
+    return stats
+
+def sub_statistics_mcds_feature_vector(signal, coch_fb, mod_fb, downsampler, N_moments = 4, alpha = torch.tensor([100, 1, 1/10, 1/100])):
+    stats_1, stats_2, stats_3 = sub_statistics_mcds(signal, coch_fb, mod_fb, downsampler, N_moments, alpha)
+    # transform to 1D
+    stats_1 = stats_1.view(-1)
+    stats_2 = stats_2.view(-1)
+    stats_3 = stats_3.view(-1)
+
+    # concatenate all stats
+    stats = torch.cat((stats_1, stats_2, stats_3), dim=0)
     return stats
 
 def texstat_loss(x, y, coch_fb, mod_fb, downsampler, N_moments = 4, alpha = torch.tensor([100,1,1/10,1/100]), beta=torch.tensor([1, 20, 20, 20, 20])):
