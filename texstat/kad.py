@@ -81,11 +81,12 @@ class KAD_wrapper():
                                         alpha = self.alpha,
                                         bandwidth = self.bandwidth,
                                         kernel = self.kernel,
-                                        device = self.device)
+                                        device = self.device,
+                                        comp_device = self.device)
 
-def stats_model(segment_np, coch_fb, mod_fb, downsampler, N_moments, alpha):
-    segment_torch = torch.tensor(segment_np)
-    return sub_statistics_mcds_feature_vector(segment_torch, coch_fb, mod_fb, downsampler, N_moments, alpha).detach().numpy()
+def stats_model(segment_np, coch_fb, mod_fb, downsampler, N_moments, alpha, device='cpu'):
+    segment_torch = torch.tensor(segment_np, device=device)
+    return sub_statistics_mcds_feature_vector(segment_torch, coch_fb, mod_fb, downsampler, N_moments, alpha).detach().cpu().numpy()
 
 # Function to extract embeddings from folder with caching
 def extract_embeddings_from_folder(folder_path, segment_size, sample_rate, hop_size=None, segments_number=None, 
@@ -289,7 +290,7 @@ def compute_kad_from_embeddings(embeddings_real, embeddings_fake, bandwidth=None
 
 def compute_kad_from_folders(folder_path_1, folder_path_2, segment_size, sample_rate, hop_size=None,
                              segments_number=None, cache_dir=None, force_recompute=False, 
-                             bandwidth=None, kernel='gaussian', device='cpu', *model_args, **model_kwargs):
+                             bandwidth=None, kernel='gaussian', device='cpu', comp_device='cpu', *model_args, **model_kwargs):
     """
     Compute KAD between two folders of audio files.
     
@@ -304,7 +305,8 @@ def compute_kad_from_folders(folder_path_1, folder_path_2, segment_size, sample_
         force_recompute: Force recomputation even if cache exists
         bandwidth: Kernel bandwidth (None for automatic)
         kernel: Kernel type ('gaussian', 'iq', 'imq')
-        device: Computation device
+        device: Computation device for KAD calculation
+        comp_device: Device for feature computation (filterbanks, etc)
         *model_args: Arguments for the feature extraction model
         **model_kwargs: Keyword arguments for the feature extraction model
     
@@ -314,6 +316,9 @@ def compute_kad_from_folders(folder_path_1, folder_path_2, segment_size, sample_
     print("\n" + "="*60)
     print("Starting KAD computation")
     print("="*60)
+    
+    # Add comp_device to model_kwargs
+    model_kwargs['device'] = comp_device
     
     embeddings_1 = extract_embeddings_from_folder(folder_path_1, segment_size, sample_rate, hop_size,
                                                   segments_number, cache_dir, force_recompute, *model_args, **model_kwargs)

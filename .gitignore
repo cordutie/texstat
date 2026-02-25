@@ -6,4 +6,7 @@ __pycache__/
 
 # Ignore audio files used for testing
 *.wav
+
+# Ignore multi-class example
+example_multi_classes.ipynb
 classes/
