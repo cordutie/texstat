@@ -19,9 +19,8 @@ import resampy
 import numpy as np
 import pickle
 import itertools
-from scipy import linalg
 
-class FAD_wrapper():
+class KAD_wrapper():
     def __init__(self, frame_size, 
                  N_filter_bank = 16, 
                  M_filter_bank = 6, 
@@ -32,6 +31,8 @@ class FAD_wrapper():
                  spectrum_lower_bound = 20, 
                  spectrum_higher_bound = 16000,
                  hop_size = None,
+                 bandwidth = None,
+                 kernel = 'gaussian',
                  device='cpu'):
         self.frame_size          = frame_size
         self.N_filter_bank       = N_filter_bank
@@ -41,6 +42,9 @@ class FAD_wrapper():
         self.alpha               = alpha.to(device)
         self.downsampling_factor = downsampling_factor
         self.hop_size            = hop_size if hop_size is not None else frame_size
+        self.bandwidth           = bandwidth
+        self.kernel              = kernel
+        self.device              = device
         self.new_sr              = self.sr // self.downsampling_factor
         self.new_frame_size      = self.frame_size // self.downsampling_factor
         self.downsampler = torchaudio.transforms.Resample(self.sr, self.new_sr).to(device)
@@ -50,7 +54,7 @@ class FAD_wrapper():
     def score(self, folder_path_1, folder_path_2, segments_number=None, 
               cache_dir=None, force_recompute=False):
         """
-        Compute FAD score between two folders.
+        Compute KAD score between two folders.
         
         Args:
             folder_path_1: Path to first audio folder
@@ -60,9 +64,9 @@ class FAD_wrapper():
             force_recompute: If True, ignore cache and recompute embeddings
         
         Returns:
-            FAD score (float)
+            KAD score (float)
         """
-        return compute_fad_from_folders(folder_path_1=folder_path_1, 
+        return compute_kad_from_folders(folder_path_1=folder_path_1, 
                                         folder_path_2=folder_path_2, 
                                         segment_size=self.frame_size, 
                                         sample_rate=self.sr,
@@ -74,10 +78,10 @@ class FAD_wrapper():
                                         mod_fb = self.mod_fb, 
                                         downsampler = self.downsampler,
                                         N_moments = self.N_moments,
-                                        alpha = self.alpha)
-
-    # def score_from_signals(self, signal_1, signal_2):
-    #     return compute_fad_from_signals(signal_1=signal_1, signal_2=signal_2, segment_size=self.frame_size, coch_fb = self.coch_fb, mod_fb = self.mod_fb, downsampler = self.downsampler)
+                                        alpha = self.alpha,
+                                        bandwidth = self.bandwidth,
+                                        kernel = self.kernel,
+                                        device = self.device)
 
 def stats_model(segment_np, coch_fb, mod_fb, downsampler, N_moments, alpha):
     segment_torch = torch.tensor(segment_np)
@@ -163,88 +167,131 @@ def extract_embeddings_from_folder(folder_path, segment_size, sample_rate, hop_s
     print(f"Processed {len(all_embeddings)} embeddings for {folder_path}")
     return all_embeddings
 
-# # Function to extract embeddings from folder
-# def extract_embeddings_from_signal(signal, segment_size, *model_args, **model_kwargs):
-#     embeddings_list = []
-#     segments = segment_audio_from_signal(signal, segment_size)
-#     for segment in segments:
-#         # compute embedding/feature vector for each segment
-#         embedding_local = stats_model(segment, *model_args, **model_kwargs)
-#         if np.isnan(embedding_local).any():
-#             continue
-#         else:
-#             embeddings_list.append(embedding_local)
-#     return np.vstack(embeddings_list)  # Stack into a single array
-
-def calculate_frechet_distance(mu1, sigma1, mu2, sigma2, eps=1e-6):
+def median_pairwise_distance(x, subsample=None):
     """
-    Code snippet taken from: https://github.com/gudgud96/frechet-audio-distance/blob/main/frechet_audio_distance/fad.py
-    which was adapted from: https://github.com/mseitzer/pytorch-fid/blob/master/src/pytorch_fid/fid_score.py
-
-    Numpy implementation of the Frechet Distance.
-    The Frechet distance between two multivariate Gaussians X_1 ~ N(mu_1, C_1)
-    and X_2 ~ N(mu_2, C_2) is
-            d^2 = ||mu_1 - mu_2||^2 + Tr(C_1 + C_2 - 2*sqrt(C_1*C_2)).
-    Stable version by Dougal J. Sutherland.
-    Params:
-    -- mu1   : Numpy array containing the activations of a layer of the
-            inception net (like returned by the function 'get_predictions')
-            for generated samples.
-    -- mu2   : The sample mean over activations, precalculated on an
-            representative data set.
-    -- sigma1: The covariance matrix over activations for generated samples.
-    -- sigma2: The covariance matrix over activations, precalculated on an
-            representative data set.
+    Compute the median pairwise distance of an embedding set.
+    
+    Args:
+        x: torch.Tensor of shape (n_samples, embedding_dim)
+        subsample: int, number of random pairs to consider (optional)
+    
     Returns:
-    --   : The Frechet Distance.
+        The median pairwise distance between points in x.
     """
+    x = torch.tensor(x, dtype=torch.float32)
+    n_samples = x.shape[0]
+    
+    if subsample is not None and subsample < n_samples * (n_samples - 1) / 2:
+        # Randomly select pairs of indices
+        idx1 = torch.randint(0, n_samples, (subsample,))
+        idx2 = torch.randint(0, n_samples, (subsample,))
+        
+        # Ensure idx1 != idx2
+        mask = idx1 == idx2
+        idx2[mask] = (idx2[mask] + 1) % n_samples
+        
+        # Compute distances for selected pairs
+        distances = torch.sqrt(torch.sum((x[idx1] - x[idx2])**2, dim=1))
+    else:
+        # Compute all pairwise distances
+        distances = torch.pdist(x)
+        
+    return torch.median(distances).item()
 
-    mu1 = np.atleast_1d(mu1)
-    mu2 = np.atleast_1d(mu2)
-
-    sigma1 = np.atleast_2d(sigma1)
-    sigma2 = np.atleast_2d(sigma2)
-
-    assert mu1.shape == mu2.shape, \
-        'Training and test mean vectors have different lengths'
-    assert sigma1.shape == sigma2.shape, \
-        'Training and test covariances have different dimensions'
-
-    diff = mu1 - mu2
-
-    # Product might be almost singular
-    covmean, _ = linalg.sqrtm(sigma1.dot(sigma2).astype(complex), disp=False)
-    if not np.isfinite(covmean).all():
-        msg = ('fid calculation produces singular product; '
-                'adding %s to diagonal of cov estimates') % eps
-        print(msg)
-        offset = np.eye(sigma1.shape[0]) * eps
-        covmean = linalg.sqrtm((sigma1 + offset).dot(sigma2 + offset).astype(complex))
-
-    # Numerical error might give slight imaginary component
-    if np.iscomplexobj(covmean):
-        if not np.allclose(np.diagonal(covmean).imag, 0, atol=1e-3):
-            m = np.max(np.abs(covmean.imag))
-            raise ValueError('Imaginary component {}'.format(m))
-        covmean = covmean.real
-
-    tr_covmean = np.trace(covmean)
-
-    return (diff.dot(diff) + np.trace(sigma1)
-            + np.trace(sigma2) - 2 * tr_covmean)
-
-def compute_fad_from_embeddings(embeddings_real, embeddings_fake):
-    print("Computing FAD (Fréchet Audio Distance)...")
-    mu_real, sigma_real = np.mean(embeddings_real, axis=0), np.cov(embeddings_real, rowvar=False)
-    mu_fake, sigma_fake = np.mean(embeddings_fake, axis=0), np.cov(embeddings_fake, rowvar=False)
-    fad_score = calculate_frechet_distance(mu_real, sigma_real, mu_fake, sigma_fake)
-    print(f"FAD computed: {fad_score:.4f}")
-    return fad_score
-
-def compute_fad_from_folders(folder_path_1, folder_path_2, segment_size, sample_rate, hop_size=None, 
-                             segments_number=None, cache_dir=None, force_recompute=False, *model_args, **model_kwargs):
+def calculate_kernel_audio_distance(embeddings_1, embeddings_2, bandwidth=None, kernel='gaussian', device='cpu', eps=1e-8):
     """
-    Compute FAD between two folders of audio files.
+    Compute the Kernel Audio Distance (KAD) between two samples using PyTorch.
+    
+    This implements the Maximum Mean Discrepancy (MMD) with kernel methods.
+    KAD = E[k(x,x')] + E[k(y,y')] - 2*E[k(x,y)]
+    
+    where k is a kernel function (e.g., Gaussian RBF).
+
+    Args:
+        embeddings_1: The first set of embeddings of shape (m, embedding_dim).
+        embeddings_2: The second set of embeddings of shape (n, embedding_dim).
+        bandwidth: The bandwidth value for the kernel. If None, uses median heuristic.
+        kernel: Kernel function to use ('gaussian', 'iq', 'imq').
+        device: Device to run computation on ('cpu' or 'cuda').
+        eps: Small value to prevent division by zero.
+
+    Returns:
+        The KAD between the two embedding sets (scaled by 100).
+    """
+    SCALE_FACTOR = 100
+    
+    # Convert to tensors and move to device
+    x = torch.tensor(embeddings_1, dtype=torch.float32, device=device)
+    y = torch.tensor(embeddings_2, dtype=torch.float32, device=device)
+    
+    # Use median distance heuristic if bandwidth not provided
+    if bandwidth is None:
+        bandwidth = median_pairwise_distance(y)
+    
+    m, n = x.shape[0], y.shape[0]
+    
+    # Define kernel functions
+    gamma = 1 / (2 * bandwidth**2 + eps)
+    if kernel == 'gaussian':    # Gaussian Kernel (RBF)
+        kernel_fn = lambda a: torch.exp(-gamma * a)
+    elif kernel == 'iq':        # Inverse Quadratic Kernel
+        kernel_fn = lambda a: 1 / (1 + gamma * a)
+    elif kernel == 'imq':       # Inverse Multiquadric Kernel
+        kernel_fn = lambda a: 1 / torch.sqrt(1 + gamma * a)
+    else:
+        raise ValueError("Invalid kernel type. Valid kernels: 'gaussian', 'iq', 'imq'")
+    
+    # Compute kernel for x vs x (k_xx)
+    xx = x @ x.T
+    x_sqnorms = torch.diagonal(xx)
+    d2_xx = x_sqnorms.unsqueeze(1) + x_sqnorms.unsqueeze(0) - 2 * xx  # shape (m, m)
+    k_xx = kernel_fn(d2_xx)
+    k_xx = k_xx - torch.diag(torch.diagonal(k_xx))  # Remove diagonal (unbiased estimator)
+    k_xx_mean = k_xx.sum() / (m * (m - 1))
+    
+    # Compute kernel for y vs y (k_yy)
+    yy = y @ y.T
+    y_sqnorms = torch.diagonal(yy)
+    d2_yy = y_sqnorms.unsqueeze(1) + y_sqnorms.unsqueeze(0) - 2 * yy  # shape (n, n)
+    k_yy = kernel_fn(d2_yy)
+    k_yy = k_yy - torch.diag(torch.diagonal(k_yy))  # Remove diagonal (unbiased estimator)
+    k_yy_mean = k_yy.sum() / (n * (n - 1))
+    
+    # Compute kernel for x vs y (k_xy)
+    xy = x @ y.T
+    d2_xy = x_sqnorms.unsqueeze(1) + y_sqnorms.unsqueeze(0) - 2 * xy  # shape (m, n)
+    k_xy = kernel_fn(d2_xy)
+    k_xy_mean = k_xy.mean()
+    
+    # Compute MMD (Maximum Mean Discrepancy)
+    result = k_xx_mean + k_yy_mean - 2 * k_xy_mean
+    
+    return (result * SCALE_FACTOR).item()
+
+def compute_kad_from_embeddings(embeddings_real, embeddings_fake, bandwidth=None, kernel='gaussian', device='cpu'):
+    """
+    Compute KAD from pre-computed embeddings.
+    
+    Args:
+        embeddings_real: Embeddings from the first set (numpy array)
+        embeddings_fake: Embeddings from the second set (numpy array)
+        bandwidth: Kernel bandwidth (None for automatic)
+        kernel: Kernel type ('gaussian', 'iq', 'imq')
+        device: Computation device
+    
+    Returns:
+        KAD score (float)
+    """
+    print("Computing KAD (Kernel Audio Distance)...")
+    kad_score = calculate_kernel_audio_distance(embeddings_real, embeddings_fake, bandwidth, kernel, device)
+    print(f"KAD computed: {kad_score:.4f}")
+    return kad_score
+
+def compute_kad_from_folders(folder_path_1, folder_path_2, segment_size, sample_rate, hop_size=None,
+                             segments_number=None, cache_dir=None, force_recompute=False, 
+                             bandwidth=None, kernel='gaussian', device='cpu', *model_args, **model_kwargs):
+    """
+    Compute KAD between two folders of audio files.
     
     Args:
         folder_path_1: Path to first folder
@@ -255,33 +302,29 @@ def compute_fad_from_folders(folder_path_1, folder_path_2, segment_size, sample_
         segments_number: Number of segments to use (None for all)
         cache_dir: Directory to cache embeddings (None = auto)
         force_recompute: Force recomputation even if cache exists
+        bandwidth: Kernel bandwidth (None for automatic)
+        kernel: Kernel type ('gaussian', 'iq', 'imq')
+        device: Computation device
         *model_args: Arguments for the feature extraction model
         **model_kwargs: Keyword arguments for the feature extraction model
     
     Returns:
-        FAD score (float)
+        KAD score (float)
     """
     print("\n" + "="*60)
-    print("Starting FAD computation")
+    print("Starting KAD computation")
     print("="*60)
     
-    embeddings_1 = extract_embeddings_from_folder(folder_path_1, segment_size, sample_rate, hop_size, 
+    embeddings_1 = extract_embeddings_from_folder(folder_path_1, segment_size, sample_rate, hop_size,
                                                   segments_number, cache_dir, force_recompute, *model_args, **model_kwargs)
-    embeddings_2 = extract_embeddings_from_folder(folder_path_2, segment_size, sample_rate, hop_size, 
+    embeddings_2 = extract_embeddings_from_folder(folder_path_2, segment_size, sample_rate, hop_size,
                                                   segments_number, cache_dir, force_recompute, *model_args, **model_kwargs)
     
-    # Compute FAD
-    fad_score = compute_fad_from_embeddings(embeddings_1, embeddings_2)
+    # Compute KAD
+    kad_score = compute_kad_from_embeddings(embeddings_1, embeddings_2, bandwidth, kernel, device)
     
     print("="*60)
-    print(f"FAD computation complete: {fad_score:.4f}")
+    print(f"KAD computation complete: {kad_score:.4f}")
     print("="*60 + "\n")
     
-    return fad_score
-
-# def compute_fad_from_signals(signal_1, signal_2, segment_size, *model_args, **model_kwargs):
-#     embeddings_1 = extract_embeddings_from_signal(signal_1, segment_size, *model_args, **model_kwargs)
-#     embeddings_2 = extract_embeddings_from_signal(signal_2, segment_size, *model_args, **model_kwargs)
-#     # Compute FAD
-#     fad_score = compute_fad_from_embeddings(embeddings_1, embeddings_2)
-#     return fad_score
+    return kad_score

@@ -15,14 +15,15 @@ def get_all_wav_paths(path):
     return all_files
 
 # Function that segmentate a file and make a numpy array from it
-def segment_audio(file_path, segment_size, sr, torch_type=False):
+def segment_audio(file_path, segment_size, sr, hop_size=None, torch_type=False):
     """
-    Segments an audio file into chunks of segment_size seconds.
+    Segments an audio file into chunks of segment_size with optional overlap.
     
     Parameters:
         file_path (str): Path to the audio file.
         segment_size (int): Size of each segment.
         sr (int): Sampling rate (default 44100).
+        hop_size (int): Hop size between segments. If None, defaults to segment_size (no overlap).
     
     Returns:
         List[np.ndarray]: List of segmented audio clips.
@@ -41,24 +42,34 @@ def segment_audio(file_path, segment_size, sr, torch_type=False):
     # Normalize
     audio = audio / 32768.0 
 
-    # Segment the audio
-    segments = [audio[i:i + segment_size] for i in range(0, len(audio), segment_size)]
-    segments.pop()  # Remove the last segment since it might be too short
+    # Set hop_size to segment_size if not provided (no overlap)
+    if hop_size is None:
+        hop_size = segment_size
+
+    # Segment the audio with hop_size
+    segments = []
+    for i in range(0, len(audio) - segment_size + 1, hop_size):
+        segments.append(audio[i:i + segment_size])
 
     # Convert to torch tensor if needed
     if torch_type:
         segments = [torch.tensor(segment) for segment in segments]
     return segments
 
-def segment_audio_from_signal(signal, segment_size, torch_type=False):
+def segment_audio_from_signal(signal, segment_size, hop_size=None, torch_type=False):
     # Transform to int16 and normalize
     signal = signal / np.max(np.abs(signal))
     audio = (signal * 32768).astype(np.int16)
     audio = audio / 32768.0 
 
-    # Segment the audio
-    segments = [audio[i:i + segment_size] for i in range(0, len(audio), segment_size)]
-    segments.pop()  # Remove the last segment since it might be too short
+    # Set hop_size to segment_size if not provided (no overlap)
+    if hop_size is None:
+        hop_size = segment_size
+
+    # Segment the audio with hop_size
+    segments = []
+    for i in range(0, len(audio) - segment_size + 1, hop_size):
+        segments.append(audio[i:i + segment_size])
 
     # Convert to torch tensor if needed
     if torch_type:
@@ -66,12 +77,12 @@ def segment_audio_from_signal(signal, segment_size, torch_type=False):
     return segments
 
 # Function that segmentate all files in a path and make a numpy array from it
-def segmentate_from_path(path, sampling_rate = 44100, segment_length=44100, segments_number = None, torch_type=False):
+def segmentate_from_path(path, sampling_rate = 44100, segment_length=44100, hop_size=None, segments_number = None, torch_type=False):
     all_files = get_all_wav_paths(path)
     print(f"Found {len(all_files)} files in {path}")
     all_segments = []
     for file in all_files:
-        segments = segment_audio(file, segment_length, sampling_rate, torch_type)
+        segments = segment_audio(file, segment_length, sampling_rate, hop_size, torch_type)
         print(f"    Segmented {len(segments)} segments from {file}")
         all_segments.extend(segments)
     print(f"Total segments: {len(all_segments)}")
