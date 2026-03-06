@@ -52,7 +52,7 @@ class KAD_wrapper():
         self.mod_fb      = fb.Logarithmic(self.new_frame_size, self.new_sr, self.M_filter_bank,        10, self.new_sr // 4)
 
     def score(self, folder_path_1, folder_path_2, segments_number=None, 
-              cache_dir=None, force_recompute=False):
+              cache_dir=None, model=None, force_recompute=False):
         """
         Compute KAD score between two folders.
         
@@ -82,11 +82,17 @@ class KAD_wrapper():
                                         bandwidth = self.bandwidth,
                                         kernel = self.kernel,
                                         device = self.device,
-                                        comp_device = self.device)
+                                        comp_device = self.device,
+                                        model = model)
 
-def stats_model(segment_np, coch_fb, mod_fb, downsampler, N_moments, alpha, device='cpu'):
+def stats_model(segment_np, coch_fb, mod_fb, downsampler, N_moments, alpha, device='cpu', model=None):
     segment_torch = torch.tensor(segment_np, device=device)
-    return sub_statistics_mcds_feature_vector(segment_torch, coch_fb, mod_fb, downsampler, N_moments, alpha).detach().cpu().numpy()
+    if model=="full":
+        result = statistics_mcds_feature_vector(segment_torch, coch_fb, mod_fb, downsampler, N_moments, alpha).detach().cpu().numpy()
+    else:
+        result = sub_statistics_mcds_feature_vector(segment_torch, coch_fb, mod_fb, downsampler, N_moments, alpha).detach().cpu().numpy()
+    # print(f"Computed embedding of shape {result.shape} for segment of shape {segment_np.shape}")
+    return result
 
 # Function to extract embeddings from folder with caching
 def extract_embeddings_from_folder(folder_path, segment_size, sample_rate, hop_size=None, segments_number=None, 
@@ -114,6 +120,8 @@ def extract_embeddings_from_folder(folder_path, segment_size, sample_rate, hop_s
     # Set up cache directory
     if cache_dir is None:
         cache_dir = os.path.join(folder_path, "embeddings_cache")
+    else:
+        cache_dir = os.path.join(folder_path, cache_dir)
     os.makedirs(cache_dir, exist_ok=True)
     
     cache_file = os.path.join(cache_dir, "embeddings.npy")

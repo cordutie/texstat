@@ -49,7 +49,7 @@ class FAD_wrapper():
         self.mod_fb      = fb.Logarithmic(self.new_frame_size, self.new_sr, self.M_filter_bank,        10, self.new_sr // 4)
 
     def score(self, folder_path_1, folder_path_2, segments_number=None, 
-              cache_dir=None, force_recompute=False):
+              cache_dir=None, model=None, force_recompute=False):
         """
         Compute FAD score between two folders.
         
@@ -76,14 +76,18 @@ class FAD_wrapper():
                                         downsampler = self.downsampler,
                                         N_moments = self.N_moments,
                                         alpha = self.alpha,
-                                        device = self.device)
+                                        device = self.device,
+                                        model = model)
 
     # def score_from_signals(self, signal_1, signal_2):
     #     return compute_fad_from_signals(signal_1=signal_1, signal_2=signal_2, segment_size=self.frame_size, coch_fb = self.coch_fb, mod_fb = self.mod_fb, downsampler = self.downsampler)
 
-def stats_model(segment_np, coch_fb, mod_fb, downsampler, N_moments, alpha, device='cpu'):
+def stats_model(segment_np, coch_fb, mod_fb, downsampler, N_moments, alpha, device='cpu', model=None):
     segment_torch = torch.tensor(segment_np, device=device)
-    return sub_statistics_mcds_feature_vector(segment_torch, coch_fb, mod_fb, downsampler, N_moments, alpha).detach().cpu().numpy()
+    if model=="full":
+        return statistics_mcds_feature_vector(segment_torch, coch_fb, mod_fb, downsampler, N_moments, alpha).detach().cpu().numpy()
+    else:
+        return sub_statistics_mcds_feature_vector(segment_torch, coch_fb, mod_fb, downsampler, N_moments, alpha).detach().cpu().numpy()
 
 # Function to extract embeddings from folder with caching
 def extract_embeddings_from_folder(folder_path, segment_size, sample_rate, hop_size=None, segments_number=None, 
@@ -111,6 +115,8 @@ def extract_embeddings_from_folder(folder_path, segment_size, sample_rate, hop_s
     # Set up cache directory
     if cache_dir is None:
         cache_dir = os.path.join(folder_path, "embeddings_cache")
+    else:
+        cache_dir = os.path.join(folder_path, cache_dir)
     os.makedirs(cache_dir, exist_ok=True)
     
     cache_file = os.path.join(cache_dir, "embeddings.npy")

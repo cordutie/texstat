@@ -360,7 +360,7 @@ def statistics_mcds_feature_vector(signal, coch_fb, mod_fb, downsampler, N_momen
 
     # concatenate all stats
     stats = torch.cat((stats_1, stats_2, stats_3, stats_4, stats_5), dim=0)
-    stats = torch.cat((stats_1, stats_2, stats_3), dim=0)
+    # stats = torch.cat((stats_1, stats_2, stats_3), dim=0)
     return stats
 
 def sub_statistics_mcds_feature_vector(signal, coch_fb, mod_fb, downsampler, N_moments = 4, alpha = torch.tensor([100, 1, 1/10, 1/100])):

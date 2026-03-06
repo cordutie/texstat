@@ -4,7 +4,7 @@ TexStat is a perceptually-motivated audio feature extraction library for texture
 
 ## Features
 
-- **Perceptual Audio Features**: Statistical texture representation (S_1, S_2, S_3) based on cochlear and modulation filterbanks
+- **Perceptual Audio Features**: Statistical texture representation $(S_1, S_2, S_3)$ based on cochlear and modulation filterbanks
 - **Dual Usage**:
   - **Loss Function**: Differentiable loss for training neural networks (GANs, VAEs, diffusion models)
   - **Evaluation Metrics**: FAD (Fréchet Audio Distance) and KAD (Kernel Audio Distance) for model evaluation
@@ -15,6 +15,8 @@ TexStat is a perceptually-motivated audio feature extraction library for texture
 ## Installation
 
 ```bash
+git clone https://github.com/cordutie/texstat.git
+cd texstat
 pip install -r requirements.txt
 ```
 
@@ -37,6 +39,7 @@ loss.backward()
 
 ### As an Evaluation Metric
 
+Choose a `model_type` between `"full"` and `"sub"`. Setting `model_type="sub"` uses a subset of the statistics computed by `texstat`, namely $S = \{S_1, S_2, S_3\}$. Using the full set of statistics produces much larger embeddings, and FAD can become unstable in higher dimensions. For such models, KAD is preferred.
 
 #### KAD (Kernel Audio Distance) ⭐ **Recommended**
 
@@ -55,7 +58,7 @@ kad = KAD_wrapper(
 )
 
 # Compute KAD between two folders of audio files
-kad_score = kad.score('path/to/real_audio/', 'path/to/generated_audio/')
+kad_score = kad.score('path/to/real_audio/', 'path/to/generated_audio/', model=model_type)
 print(f"KAD Score: {kad_score:.4f}")
 ```
 
@@ -73,7 +76,7 @@ fad = FAD_wrapper(
 )
 
 # Compute FAD between two folders of audio files
-fad_score = fad.score('path/to/real_audio/', 'path/to/generated_audio/')
+fad_score = fad.score('path/to/real_audio/', 'path/to/generated_audio/', model=model_type)
 print(f"FAD Score: {fad_score:.4f}")
 ```
 
@@ -83,16 +86,15 @@ print(f"FAD Score: {fad_score:.4f}")
 - **Non-parametric approach**: Uses Maximum Mean Discrepancy (MMD) with kernel methods
 - **No distribution assumptions**: More robust to complex, multimodal distributions
 - **Kernels available**: Gaussian RBF, Inverse Quadratic, Inverse Multiquadric
-- **Use case**: More accurate for complex texture sounds, captures non-linear relationships
+- **Dimension size stability**: Reliable on larger size embeddings.
 - **Lower is better**: Smaller distance indicates more similar distributions
-- **Why preferred**: Does not assume Gaussian distributions, making it more suitable for the complex, multimodal nature of audio texture statistics
+- **Why preferred**: Does not assume Gaussian distributions, making it more suitable for the complex, multimodal nature of audio texture statistics.
 
 ### FAD (Fréchet Audio Distance)
 - **Parametric approach**: Assumes Gaussian distributions
-- **Formula**: `d² = ||μ₁ - μ₂||² + Tr(Σ₁ + Σ₂ - 2√(Σ₁Σ₂))`
-- **Use case**: Fast computation, works well when distributions are approximately Gaussian
+- **Dimension size unstable**: Unreliable on larger size embeddings.
 - **Lower is better**: Smaller distance indicates more similar distributions
-- **Limitation**: May not fully capture the complexity of audio texture distributions
+- **Why preferred**: Well stablished in the literature.
 
 ## Examples
 

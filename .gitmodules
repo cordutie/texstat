@@ -1,3 +1,0 @@
-[submodule "texstat/torch_filterbanks"]
-	path = texstat/torch_filterbanks
-	url = https://github.com/cordutie/torch_filterbanks.git
